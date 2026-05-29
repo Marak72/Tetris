@@ -16,6 +16,19 @@ const currentRoomIdSpan = document.getElementById('current-room-id');
 const gameOverOverlay = document.getElementById('game-over-overlay');
 const countdownOverlay = document.getElementById('countdown-overlay');
 
+const maxPlayersSelect = document.getElementById('max-players');
+const nextPiecesGrid = document.getElementById('next-pieces-grid');
+
+const TETROMINOS = {
+    'I': { shape: [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]], color: '#00f0f0' },
+    'J': { shape: [[1, 0, 0], [1, 1, 1], [0, 0, 0]], color: '#0000f0' },
+    'L': { shape: [[0, 0, 1], [1, 1, 1], [0, 0, 0]], color: '#f0a000' },
+    'O': { shape: [[1, 1], [1, 1]], color: '#f0f000' },
+    'S': { shape: [[0, 1, 1], [1, 1, 0], [0, 0, 0]], color: '#00f000' },
+    'T': { shape: [[0, 1, 0], [1, 1, 1], [0, 0, 0]], color: '#a000f0' },
+    'Z': { shape: [[1, 1, 0], [0, 1, 1], [0, 0, 0]], color: '#f00000' }
+};
+
 let BLOCK_SIZE = 30;
 let currentRoomId = '';
 let particles = [];
@@ -139,11 +152,12 @@ joinBtn.addEventListener('click', () => {
     const roomId = roomIdInput.value.trim();
     const width = parseInt(boardSizeSelect.value);
     const mode = gameModeSelect.value;
+    const maxPlayers = maxPlayersSelect.value;
 
     if (!roomId) return alert('Введите ID комнаты');
 
     currentRoomId = roomId;
-    socket.emit('joinRoom', { roomId, name: username, settings: { width, mode } });
+    socket.emit('joinRoom', { roomId, name: username, settings: { width, mode, maxPlayers } });
 
     lobby.style.display = 'none';
     gameContainer.style.display = 'flex';
@@ -179,6 +193,8 @@ socket.on('gameState', (state) => {
         statusDiv.textContent = 'ОЖИДАНИЕ ИГРОКОВ...';
         statusDiv.style.color = '#ffc107';
         readyBtn.style.display = 'block';
+        readyBtn.disabled = false;
+        readyBtn.textContent = 'Я ГОТОВ';
     } else if (status === 'countdown') {
         statusDiv.textContent = 'ПРИГОТОВЬТЕСЬ!';
         statusDiv.style.color = '#007bff';
@@ -186,7 +202,50 @@ socket.on('gameState', (state) => {
     }
 
     updatePlayersList(players);
+    updateNextPieces(players);
 });
+
+function updateNextPieces(players) {
+    nextPiecesGrid.innerHTML = '';
+    for (const id in players) {
+        const p = players[id];
+        if (!p.piece || !p.piece.next) continue;
+
+        const container = document.createElement('div');
+        container.className = 'next-piece-item';
+        
+        const name = document.createElement('div');
+        name.className = 'next-piece-name';
+        name.textContent = p.name;
+        if (id === socket.id) name.style.color = '#00f2ff';
+
+        const nextCanvas = document.createElement('canvas');
+        nextCanvas.className = 'next-piece-canvas';
+        nextCanvas.width = 60;
+        nextCanvas.height = 60;
+        const nCtx = nextCanvas.getContext('2d');
+
+        const piece = TETROMINOS[p.piece.next];
+        const cellSize = 12;
+        const offsetX = (nextCanvas.width - piece.shape[0].length * cellSize) / 2;
+        const offsetY = (nextCanvas.height - piece.shape.length * cellSize) / 2;
+
+        piece.shape.forEach((row, y) => {
+            row.forEach((value, x) => {
+                if (value) {
+                    nCtx.fillStyle = piece.color;
+                    nCtx.shadowBlur = 5;
+                    nCtx.shadowColor = piece.color;
+                    nCtx.fillRect(offsetX + x * cellSize, offsetY + y * cellSize, cellSize - 2, cellSize - 2);
+                }
+            });
+        });
+
+        container.appendChild(name);
+        container.appendChild(nextCanvas);
+        nextPiecesGrid.appendChild(container);
+    }
+}
 
 socket.on('countdown', (count) => {
     countdownOverlay.style.display = 'block';

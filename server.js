@@ -28,10 +28,12 @@ function createRoom(roomId, settings) {
     console.log(`[Room ${roomId}] Creating room with settings:`, settings);
     const width = settings.width || 15;
     const height = settings.height || 20;
+    const maxPlayers = parseInt(settings.maxPlayers) || 2;
     ROOMS[roomId] = {
         id: roomId,
         width,
         height,
+        maxPlayers,
         mode: settings.mode || 'co-op',
         board: Array.from({ length: height }, () => Array(width).fill(0)),
         players: {}, 
@@ -42,20 +44,22 @@ function createRoom(roomId, settings) {
     };
 }
 
-function getRandomPiece(width, playerIndex = 0) {
+function getRandomPiece(width, playerIndex = 0, totalPlayers = 2) {
     const keys = Object.keys(TETROMINOS);
     const type = keys[Math.floor(Math.random() * keys.length)];
     const piece = JSON.parse(JSON.stringify(TETROMINOS[type]));
     
-    let xOffset = 0;
-    if (playerIndex === 0) xOffset = -Math.floor(width / 4);
-    else if (playerIndex === 1) xOffset = Math.floor(width / 4);
+    // Distribute spawn points based on player index and total players
+    const sectionWidth = width / totalPlayers;
+    const xBase = sectionWidth * playerIndex + (sectionWidth / 2);
+    const x = Math.floor(xBase - piece.shape[0].length / 2);
 
     return {
         ...piece,
         type,
-        x: Math.floor(width / 2) - Math.floor(piece.shape[0].length / 2) + xOffset,
-        y: 0
+        x,
+        y: 0,
+        next: keys[Math.floor(Math.random() * keys.length)]
     };
 }
 
@@ -63,7 +67,7 @@ function rotateMatrix(matrix) {
     return matrix[0].map((_, index) => matrix.map(row => row[index]).reverse());
 }
 
-function checkCollision(board, piece, moveX, moveY, otherPiece = null) {
+function checkCollision(board, piece, moveX, moveY, otherPieces = []) {
     for (let y = 0; y < piece.shape.length; y++) {
         for (let x = 0; x < piece.shape[y].length; x++) {
             if (piece.shape[y][x]) {
@@ -76,8 +80,9 @@ function checkCollision(board, piece, moveX, moveY, otherPiece = null) {
                 // Board (blocks)
                 if (newY >= 0 && board[newY][newX]) return true;
 
-                // Other active piece
-                if (otherPiece) {
+                // Other active pieces
+                for (const otherPiece of otherPieces) {
+                    if (!otherPiece) continue;
                     for (let oy = 0; oy < otherPiece.shape.length; oy++) {
                         for (let ox = 0; ox < otherPiece.shape[oy].length; ox++) {
                             if (otherPiece.shape[oy][ox]) {
@@ -112,25 +117,41 @@ function lockPiece(room, socketId) {
     const linesCleared = clearLines(room);
     if (linesCleared > 0) {
         if (room.mode === 'versus') {
-            const opponentId = Object.keys(room.players).find(id => id !== socketId);
-            if (opponentId && linesCleared > 1) addGarbage(room, opponentId, linesCleared - 1);
+            const opponentIds = Object.keys(room.players).filter(id => id !== socketId);
+            if (opponentIds.length > 0 && linesCleared > 1) {
+                // In multiplayer versus, garbage goes to everyone else or a random opponent?
+                // Let's send to all opponents for more chaos, or just one random.
+                // Standard: send to everyone.
+                opponentIds.forEach(oppId => addGarbage(room, oppId, linesCleared - 1));
+            }
         }
         player.score += linesCleared * 100;
     }
 
-    const newPiece = getRandomPiece(room.width, player.index);
+    // Use the "next" piece and generate a new "next"
+    const keys = Object.keys(TETROMINOS);
+    const nextType = player.piece.next;
+    const newPiece = JSON.parse(JSON.stringify(TETROMINOS[nextType]));
+    const sectionWidth = room.width / Object.keys(room.players).length;
+    const xBase = sectionWidth * player.index + (sectionWidth / 2);
     
-    const otherId = Object.keys(room.players).find(id => id !== socketId);
-    const otherPiece = otherId ? room.players[otherId].piece : null;
+    player.piece = {
+        ...newPiece,
+        type: nextType,
+        x: Math.floor(xBase - newPiece.shape[0].length / 2),
+        y: 0,
+        next: keys[Math.floor(Math.random() * keys.length)]
+    };
     
-    if (checkCollision(room.board, newPiece, 0, 0, otherPiece)) {
-        console.log(`[Room ${room.id}] Game Over triggered by player ${player.name} piece spawn`);
+    const otherPieces = Object.keys(room.players)
+        .filter(id => id !== socketId)
+        .map(id => room.players[id].piece);
+    
+    if (checkCollision(room.board, player.piece, 0, 0, otherPieces)) {
+        console.log(`[Room ${room.id}] Game Over triggered by player ${player.name}`);
         room.status = 'gameover';
-        player.piece = null; // Prevent double drawing on game over
         if (room.interval) clearInterval(room.interval);
         io.to(room.id).emit('gameover', { winner: null });
-    } else {
-        player.piece = newPiece;
     }
 }
 
@@ -207,14 +228,15 @@ function update(room) {
     const playerIds = Object.keys(room.players);
     playerIds.forEach(id => {
         const player = room.players[id];
-        const otherId = playerIds.find(pid => pid !== id);
-        const otherPiece = otherId ? room.players[otherId].piece : null;
+        const otherPieces = playerIds
+            .filter(pid => pid !== id)
+            .map(pid => room.players[pid].piece);
 
         if (!player.piece) return;
 
-        if (checkCollision(room.board, player.piece, 0, 1, null)) {
+        if (checkCollision(room.board, player.piece, 0, 1, [])) {
             lockPiece(room, id);
-        } else if (!checkCollision(room.board, player.piece, 0, 1, otherPiece)) {
+        } else if (!checkCollision(room.board, player.piece, 0, 1, otherPieces)) {
             player.piece.y++;
         }
     });
@@ -230,7 +252,8 @@ function emitState(room) {
                 piece: room.players[id].piece,
                 score: room.players[id].score,
                 name: room.players[id].name,
-                ready: room.players[id].ready
+                ready: room.players[id].ready,
+                index: room.players[id].index
             };
             return acc;
         }, {}),
@@ -245,15 +268,16 @@ io.on('connection', (socket) => {
         if (!ROOMS[roomId]) createRoom(roomId, settings);
         const room = ROOMS[roomId];
         
-        if (Object.keys(room.players).length >= 2) {
+        if (Object.keys(room.players).length >= room.maxPlayers) {
             return socket.emit('error', 'Room is full');
         }
 
         socket.join(roomId);
         
-        // Find first available index (0 or 1)
+        // Find first available index
         const indices = Object.values(room.players).map(p => p.index);
-        const playerIndex = indices.includes(0) ? 1 : 0;
+        let playerIndex = 0;
+        while (indices.includes(playerIndex)) playerIndex++;
 
         room.players[socket.id] = {
             name: name || `Player ${Object.keys(room.players).length + 1}`,
@@ -274,7 +298,7 @@ io.on('connection', (socket) => {
         console.log(`[Room ${roomId}] Player ${room.players[socket.id].name} is ready`);
         
         const allReady = Object.values(room.players).every(p => p.ready);
-        if (allReady && Object.keys(room.players).length === 2 && room.status === 'waiting') {
+        if (allReady && Object.keys(room.players).length >= 2 && room.status === 'waiting') {
             startGame(room);
         } else {
             emitState(room);
@@ -287,24 +311,25 @@ io.on('connection', (socket) => {
         const player = room.players[socket.id];
         if (!player || !player.piece) return;
 
-        const otherId = Object.keys(room.players).find(id => id !== socket.id);
-        const otherPiece = otherId ? room.players[otherId].piece : null;
+        const otherPieces = Object.keys(room.players)
+            .filter(id => id !== socket.id)
+            .map(id => room.players[id].piece);
 
         if (dir === 'left') {
-            if (!checkCollision(room.board, player.piece, -1, 0, otherPiece)) player.piece.x--;
+            if (!checkCollision(room.board, player.piece, -1, 0, otherPieces)) player.piece.x--;
         } else if (dir === 'right') {
-            if (!checkCollision(room.board, player.piece, 1, 0, otherPiece)) player.piece.x++;
+            if (!checkCollision(room.board, player.piece, 1, 0, otherPieces)) player.piece.x++;
         } else if (dir === 'down') {
-            if (checkCollision(room.board, player.piece, 0, 1, null)) {
+            if (checkCollision(room.board, player.piece, 0, 1, [])) {
                 lockPiece(room, socket.id);
-            } else if (!checkCollision(room.board, player.piece, 0, 1, otherPiece)) {
+            } else if (!checkCollision(room.board, player.piece, 0, 1, otherPieces)) {
                 player.piece.y++;
             }
         } else if (dir === 'rotate') {
             const rotated = rotateMatrix(player.piece.shape);
             const originalShape = player.piece.shape;
             player.piece.shape = rotated;
-            if (checkCollision(room.board, player.piece, 0, 0, otherPiece)) {
+            if (checkCollision(room.board, player.piece, 0, 0, otherPieces)) {
                 player.piece.shape = originalShape;
             }
         }
