@@ -97,6 +97,15 @@ function checkCollision(board, piece, moveX, moveY, otherPieces = []) {
     return false;
 }
 
+function stopRoomIntervals(room) {
+    if (room.interval) clearInterval(room.interval);
+    if (room.countdownInterval) clearInterval(room.countdownInterval);
+    if (room.garbageInterval) clearInterval(room.garbageInterval);
+    room.interval = null;
+    room.countdownInterval = null;
+    room.garbageInterval = null;
+}
+
 function lockPiece(room, socketId) {
     const player = room.players[socketId];
     if (!player || !player.piece) return;
@@ -119,9 +128,6 @@ function lockPiece(room, socketId) {
         if (room.mode === 'versus') {
             const opponentIds = Object.keys(room.players).filter(id => id !== socketId);
             if (opponentIds.length > 0 && linesCleared > 1) {
-                // In multiplayer versus, garbage goes to everyone else or a random opponent?
-                // Let's send to all opponents for more chaos, or just one random.
-                // Standard: send to everyone.
                 opponentIds.forEach(oppId => addGarbage(room, oppId, linesCleared - 1));
             }
         }
@@ -132,7 +138,8 @@ function lockPiece(room, socketId) {
     const keys = Object.keys(TETROMINOS);
     const nextType = player.piece.next;
     const newPiece = JSON.parse(JSON.stringify(TETROMINOS[nextType]));
-    const sectionWidth = room.width / Object.keys(room.players).length;
+    const totalPlayers = Object.keys(room.players).length;
+    const sectionWidth = room.width / totalPlayers;
     const xBase = sectionWidth * player.index + (sectionWidth / 2);
     
     player.piece = {
@@ -150,7 +157,7 @@ function lockPiece(room, socketId) {
     if (checkCollision(room.board, player.piece, 0, 0, otherPieces)) {
         console.log(`[Room ${room.id}] Game Over triggered by player ${player.name}`);
         room.status = 'gameover';
-        if (room.interval) clearInterval(room.interval);
+        stopRoomIntervals(room);
         io.to(room.id).emit('gameover', { winner: null });
     }
 }
@@ -199,10 +206,11 @@ function startGame(room) {
     room.countdown = 3;
     room.board = Array.from({ length: room.height }, () => Array(room.width).fill(0));
     
+    const totalPlayers = Object.keys(room.players).length;
     Object.keys(room.players).forEach((id) => {
         const player = room.players[id];
         player.score = 0;
-        player.piece = getRandomPiece(room.width, player.index);
+        player.piece = getRandomPiece(room.width, player.index, totalPlayers);
     });
 
     if (room.countdownInterval) clearInterval(room.countdownInterval);
@@ -215,8 +223,20 @@ function startGame(room) {
             room.countdownInterval = null;
             console.log(`[Room ${room.id}] Game started!`);
             room.status = 'playing';
+            
             if (room.interval) clearInterval(room.interval);
             room.interval = setInterval(() => update(room), 500);
+
+            // Survival Mode: Add garbage periodically
+            if (room.mode === 'survival') {
+                if (room.garbageInterval) clearInterval(room.garbageInterval);
+                room.garbageInterval = setInterval(() => {
+                    if (room.status === 'playing') {
+                        addGarbage(room, null, 1);
+                        emitState(room);
+                    }
+                }, 8000); 
+            }
         }
         room.countdown--;
     }, 1000);
@@ -259,6 +279,24 @@ function emitState(room) {
         }, {}),
         status: room.status
     });
+}
+
+function disconnectPlayer(socketId) {
+    for (const roomId in ROOMS) {
+        const room = ROOMS[roomId];
+        if (room.players[socketId]) {
+            delete room.players[socketId];
+            if (Object.keys(room.players).length === 0) {
+                stopRoomIntervals(room);
+                delete ROOMS[roomId];
+            } else {
+                room.status = 'waiting';
+                stopRoomIntervals(room);
+                Object.values(room.players).forEach(p => p.ready = false);
+                emitState(room);
+            }
+        }
+    }
 }
 
 io.on('connection', (socket) => {
@@ -338,24 +376,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         console.log(`[Socket ${socket.id}] Disconnected`);
-        for (const roomId in ROOMS) {
-            const room = ROOMS[roomId];
-            if (room.players[socket.id]) {
-                delete room.players[socket.id];
-                if (Object.keys(room.players).length === 0) {
-                    if (room.interval) clearInterval(room.interval);
-                    if (room.countdownInterval) clearInterval(room.countdownInterval);
-                    delete ROOMS[roomId];
-                } else {
-                    room.status = 'waiting';
-                    if (room.interval) clearInterval(room.interval);
-                    if (room.countdownInterval) clearInterval(room.countdownInterval);
-                    room.countdownInterval = null;
-                    Object.values(room.players).forEach(p => p.ready = false);
-                    emitState(room);
-                }
-            }
-        }
+        disconnectPlayer(socket.id);
     });
 });
 
