@@ -212,10 +212,10 @@ function update(room) {
 
         if (!player.piece) return;
 
-        if (!checkCollision(room.board, player.piece, 0, 1, otherPiece)) {
-            player.piece.y++;
-        } else {
+        if (checkCollision(room.board, player.piece, 0, 1, null)) {
             lockPiece(room, id);
+        } else if (!checkCollision(room.board, player.piece, 0, 1, otherPiece)) {
+            player.piece.y++;
         }
     });
 
@@ -295,10 +295,10 @@ io.on('connection', (socket) => {
         } else if (dir === 'right') {
             if (!checkCollision(room.board, player.piece, 1, 0, otherPiece)) player.piece.x++;
         } else if (dir === 'down') {
-            if (!checkCollision(room.board, player.piece, 0, 1, otherPiece)) {
-                player.piece.y++;
-            } else {
+            if (checkCollision(room.board, player.piece, 0, 1, null)) {
                 lockPiece(room, socket.id);
+            } else if (!checkCollision(room.board, player.piece, 0, 1, otherPiece)) {
+                player.piece.y++;
             }
         } else if (dir === 'rotate') {
             const rotated = rotateMatrix(player.piece.shape);
