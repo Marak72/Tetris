@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Multiplayer Tetris</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="lobby">
+        <h1>Tetris Online</h1>
+        <div class="input-group">
+            <input type="text" id="username" placeholder="Ваше имя" maxlength="15">
+            <input type="text" id="room-id" placeholder="ID комнаты (например, 123)">
+        </div>
+        
+        <div class="settings">
+            <h3>Настройки:</h3>
+            <label>Размер поля:</label>
+            <select id="board-size">
+                <option value="10">Стандартное (10x20)</option>
+                <option value="15" selected>Широкое (15x20)</option>
+                <option value="20">Очень широкое (20x20)</option>
+            </select>
+
+            <label>Режим игры:</label>
+            <select id="game-mode">
+                <option value="co-op">Кооперативный (Co-op)</option>
+                <option value="versus">Соревновательный (Versus)</option>
+            </select>
+        </div>
+
+        <button id="join-btn">Войти в лобби</button>
+    </div>
+
+    <div id="game-container" style="display: none;">
+        <div id="game-info">
+            <div id="status">Ожидание игроков...</div>
+            <div id="room-display">Комната: <span id="current-room-id"></span></div>
+            <div id="players-list"></div>
+            <button id="ready-btn" style="margin-top: 20px;">Я ГОТОВ</button>
+        </div>
+        <div id="canvas-wrapper">
+            <canvas id="tetris-canvas"></canvas>
+            <div id="countdown-overlay" style="display: none;">3</div>
+        </div>
+        <div id="controls-hint">
+            <p>Управление: Стрелки или WASD</p>
+            <p>Вверх/W - Поворот, Вниз/S - Ускорить</p>
+        </div>
+    </div>
+
+    <div id="game-over-overlay" style="display: none;">
+        <h2>ИГРА ОКОНЧЕНА</h2>
+        <button onclick="location.reload()">В меню</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="client.js"></script>
+</body>
+</html>
